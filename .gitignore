@@ -72,3 +72,14 @@ data/db/
 # --- Archivos propios del consultor/equipo que no queremos versionar ---
 TODO.md
 NOTAS.md
+
+# --- Postman: ignorar carpetas internas que genera la app ---
+# Solo versionamos la colección exportada manualmente como JSON.
+.postman/
+postman/flows/
+postman/globals/
+postman/mocks/
+postman/specs/
+postman/environments/
+# Dejamos postman/collections/ y postman/*.json sin ignorar
+# para que sí se suba la colección exportada.
