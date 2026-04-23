@@ -7,10 +7,13 @@
  *   - cuáles están disponibles (aún no seleccionadas).
  *   - recuento total para las cajitas del resumen del dashboard.
  *
- * ⚠️ Estado actual (Fase 3): datos en memoria. Migrará a MongoDB en Fase 4.
+ * ⚠️ Estado actual:
+ *   La estructura de seleccionadas sigue en memoria, pero este model ya se ha
+ *   adaptado para trabajar correctamente con `publicacionModel` y `usuarioModel`,
+ *   que en Fase 4 ya operan de forma asíncrona contra MongoDB.
  *
  * Dependencias:
- *   - Importa publicacionModel y usuarioModel para componer las respuestas
+ *   - Importa publicacionModel y usuarioModel para componer respuestas
  *     enriquecidas (ej: listarPublicacionesSeleccionadas devuelve las publicaciones
  *     completas, no solo ids).
  */
@@ -43,15 +46,23 @@ export function listarIdsSeleccionados() {
  * Devuelve las publicaciones seleccionadas como objetos completos,
  * ordenadas por fecha de selección descendente (más recientes primero).
  *
- * @returns {Array<object>}
+ * Flujo:
+ *   1. Obtener los ids seleccionados actuales.
+ *   2. Leer todas las publicaciones desde publicacionModel.
+ *   3. Construir un índice id → publicación para acceso rápido.
+ *   4. Recorrer las seleccionadas en orden inverso de inserción.
+ *   5. Devolver solo aquellas que siguen existiendo.
+ *
+ * @returns {Promise<Array<object>>}
  */
-export function listarPublicacionesSeleccionadas() {
+export async function listarPublicacionesSeleccionadas() {
   const ids = listarIdsSeleccionados();
   const porId = new Map();
 
   // Construimos un índice id → publicación una sola vez para no hacer
   // publicacionModel.buscarPublicacionPorId() en bucle.
-  for (const pub of publicacionModel.listarPublicaciones()) {
+  const publicaciones = await publicacionModel.listarPublicaciones();
+  for (const pub of publicaciones) {
     porId.set(Number(pub.id), pub);
   }
 
@@ -66,13 +77,13 @@ export function listarPublicacionesSeleccionadas() {
  * Devuelve las publicaciones que todavía NO están seleccionadas,
  * en el mismo orden que listarPublicaciones() (por fecha desc).
  *
- * @returns {Array<object>}
+ * @returns {Promise<Array<object>>}
  */
-export function listarPublicacionesDisponibles() {
+export async function listarPublicacionesDisponibles() {
   const idsSeleccionados = new Set(listarIdsSeleccionados().map(Number));
-  return publicacionModel
-    .listarPublicaciones()
-    .filter((pub) => !idsSeleccionados.has(Number(pub.id)));
+  const publicaciones = await publicacionModel.listarPublicaciones();
+
+  return publicaciones.filter((pub) => !idsSeleccionados.has(Number(pub.id)));
 }
 
 /**
@@ -85,17 +96,17 @@ export function listarPublicacionesDisponibles() {
  *     pero tampoco lanza error — esto facilita la UX en el frontend).
  *
  * @param {number|string} idPublicacion
- * @returns {object} La publicación seleccionada (objeto completo).
+ * @returns {Promise<object>} La publicación seleccionada (objeto completo).
  * @throws {ValidationError}
  * @throws {NotFoundError}
  */
-export function anadirSeleccionada(idPublicacion) {
+export async function anadirSeleccionada(idPublicacion) {
   const idNum = Number(idPublicacion);
   if (!Number.isInteger(idNum) || idNum <= 0) {
     throw new ValidationError('El identificador de la publicación no es válido.');
   }
 
-  const publicacion = publicacionModel.buscarPublicacionPorId(idNum);
+  const publicacion = await publicacionModel.buscarPublicacionPorId(idNum);
   if (!publicacion) {
     throw new NotFoundError(`No existe la publicación con id ${idNum}.`);
   }
@@ -117,12 +128,12 @@ export function anadirSeleccionada(idPublicacion) {
  * Quita una publicación del panel de seleccionadas.
  *
  * @param {number|string} idPublicacion
- * @returns {object} La publicación que se quitó.
+ * @returns {Promise<object>} La publicación que se quitó.
  * @throws {ValidationError} Si el id no es válido.
  * @throws {NotFoundError} Si la publicación no estaba seleccionada
  *                         (o directamente no existe).
  */
-export function quitarSeleccionada(idPublicacion) {
+export async function quitarSeleccionada(idPublicacion) {
   const idNum = Number(idPublicacion);
   if (!Number.isInteger(idNum) || idNum <= 0) {
     throw new ValidationError('El identificador de la publicación no es válido.');
@@ -137,7 +148,7 @@ export function quitarSeleccionada(idPublicacion) {
 
   // Devolvemos la publicación completa si aún existe, o un "placeholder" mínimo
   // si la publicación original fue eliminada pero la selección persistía.
-  const publicacion = publicacionModel.buscarPublicacionPorId(idNum);
+  const publicacion = await publicacionModel.buscarPublicacionPorId(idNum);
   return publicacion || { id: idNum };
 }
 
@@ -148,18 +159,20 @@ export function quitarSeleccionada(idPublicacion) {
  * entre ambas "tablas". Lo hace el resolver de eliminarPublicacion en Fase 4
  * (o un trigger de MongoDB con $lookup en Atlas).
  *
- * @returns {number} Cantidad de selecciones huérfanas eliminadas.
+ * @returns {Promise<number>} Cantidad de selecciones huérfanas eliminadas.
  */
-export function limpiarSeleccionesHuerfanas() {
-  const idsExistentes = new Set(
-    publicacionModel.listarPublicaciones().map((p) => Number(p.id))
-  );
+export async function limpiarSeleccionesHuerfanas() {
+  const publicaciones = await publicacionModel.listarPublicaciones();
+  const idsExistentes = new Set(publicaciones.map((p) => Number(p.id)));
+
   const antes = seleccionadas.length;
+
   for (let i = seleccionadas.length - 1; i >= 0; i--) {
     if (!idsExistentes.has(Number(seleccionadas[i].publicacionId))) {
       seleccionadas.splice(i, 1);
     }
   }
+
   return antes - seleccionadas.length;
 }
 
@@ -173,14 +186,16 @@ export function limpiarSeleccionesHuerfanas() {
  * Este es el payload exacto que el dashboard del frontend renderiza en sus
  * cajitas de resumen en la parte superior de la página.
  *
- * @returns {{totalOfertas: number, totalDemandas: number, totalUsuarios: number, totalSeleccionadas: number}}
+ * @returns {Promise<{totalOfertas: number, totalDemandas: number, totalUsuarios: number, totalSeleccionadas: number}>}
  */
-export function obtenerResumenDashboard() {
-  const recuento = publicacionModel.contarPublicaciones();
+export async function obtenerResumenDashboard() {
+  const recuento = await publicacionModel.contarPublicaciones();
+  const usuarios = await usuarioModel.listarUsuarios();
+
   return {
     totalOfertas: recuento.ofertas,
     totalDemandas: recuento.demandas,
-    totalUsuarios: usuarioModel.listarUsuarios().length,
+    totalUsuarios: usuarios.length,
     totalSeleccionadas: seleccionadas.length,
   };
 }
