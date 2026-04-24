@@ -18,57 +18,52 @@
  *     completas, no solo ids).
  */
 
+import { getDb } from '../config/db.js';
 import * as publicacionModel from './publicacionModel.js';
 import * as usuarioModel from './usuarioModel.js';
 import { ValidationError, NotFoundError } from '../utils/errors.js';
 
 /**
- * "Tabla" de seleccionadas en memoria.
- * Cada entrada almacena:
- *   - publicacionId: el id de la publicación seleccionada.
- *   - fechaSeleccion: timestamp ISO de cuándo se seleccionó.
- *
- * @type {Array<{publicacionId: number, fechaSeleccion: string}>}
- */
-const seleccionadas = [];
-
-/**
  * Devuelve los ids de las publicaciones actualmente seleccionadas,
  * en el orden en que fueron añadidas.
  *
- * @returns {Array<number>}
+ * @returns {Promise<Array<number>>}
  */
-export function listarIdsSeleccionados() {
-  return seleccionadas.map((s) => s.publicacionId);
+export async function listarIdsSeleccionados() {
+  const db = getDb();
+  const coleccionSeleccionadas = db.collection('seleccionadas');
+
+  const seleccionadasDb = await coleccionSeleccionadas
+    .find({})
+    .sort({ fechaSeleccion: 1 })
+    .toArray();
+
+  return seleccionadasDb.map((s) => Number(s.publicacionId));
 }
 
 /**
  * Devuelve las publicaciones seleccionadas como objetos completos,
  * ordenadas por fecha de selección descendente (más recientes primero).
  *
- * Flujo:
- *   1. Obtener los ids seleccionados actuales.
- *   2. Leer todas las publicaciones desde publicacionModel.
- *   3. Construir un índice id → publicación para acceso rápido.
- *   4. Recorrer las seleccionadas en orden inverso de inserción.
- *   5. Devolver solo aquellas que siguen existiendo.
- *
  * @returns {Promise<Array<object>>}
  */
 export async function listarPublicacionesSeleccionadas() {
-  const ids = listarIdsSeleccionados();
+  const db = getDb();
+  const coleccionSeleccionadas = db.collection('seleccionadas');
+
+  const seleccionadasDb = await coleccionSeleccionadas
+    .find({})
+    .sort({ fechaSeleccion: -1 })
+    .toArray();
+
+  const publicaciones = await publicacionModel.listarPublicaciones();
   const porId = new Map();
 
-  // Construimos un índice id → publicación una sola vez para no hacer
-  // publicacionModel.buscarPublicacionPorId() en bucle.
-  const publicaciones = await publicacionModel.listarPublicaciones();
   for (const pub of publicaciones) {
     porId.set(Number(pub.id), pub);
   }
 
-  // Mantenemos el orden inverso de inserción (último seleccionado primero).
-  return [...seleccionadas]
-    .reverse()
+  return seleccionadasDb
     .map((s) => porId.get(Number(s.publicacionId)))
     .filter((pub) => pub !== undefined);
 }
@@ -80,7 +75,10 @@ export async function listarPublicacionesSeleccionadas() {
  * @returns {Promise<Array<object>>}
  */
 export async function listarPublicacionesDisponibles() {
-  const idsSeleccionados = new Set(listarIdsSeleccionados().map(Number));
+  const idsSeleccionados = new Set(
+    (await listarIdsSeleccionados()).map(Number)
+  );
+
   const publicaciones = await publicacionModel.listarPublicaciones();
 
   return publicaciones.filter((pub) => !idsSeleccionados.has(Number(pub.id)));
@@ -92,30 +90,35 @@ export async function listarPublicacionesDisponibles() {
  * Validaciones:
  *   - El id debe ser un número válido.
  *   - La publicación debe existir en publicacionModel.
- *   - Si ya estaba seleccionada, la operación es idempotente (no crea duplicado,
- *     pero tampoco lanza error — esto facilita la UX en el frontend).
+ *   - Si ya estaba seleccionada, la operación es idempotente.
  *
  * @param {number|string} idPublicacion
- * @returns {Promise<object>} La publicación seleccionada (objeto completo).
+ * @returns {Promise<object>} La publicación seleccionada.
  * @throws {ValidationError}
  * @throws {NotFoundError}
  */
 export async function anadirSeleccionada(idPublicacion) {
+  const db = getDb();
+  const coleccionSeleccionadas = db.collection('seleccionadas');
+
   const idNum = Number(idPublicacion);
+
   if (!Number.isInteger(idNum) || idNum <= 0) {
     throw new ValidationError('El identificador de la publicación no es válido.');
   }
 
   const publicacion = await publicacionModel.buscarPublicacionPorId(idNum);
+
   if (!publicacion) {
     throw new NotFoundError(`No existe la publicación con id ${idNum}.`);
   }
 
-  // Idempotencia: si ya estaba seleccionada, devolvemos la publicación tal cual
-  // sin crear duplicado y sin error (coherente con el comportamiento del P2).
-  const yaSeleccionada = seleccionadas.some((s) => s.publicacionId === idNum);
+  const yaSeleccionada = await coleccionSeleccionadas.findOne({
+    publicacionId: idNum,
+  });
+
   if (!yaSeleccionada) {
-    seleccionadas.push({
+    await coleccionSeleccionadas.insertOne({
       publicacionId: idNum,
       fechaSeleccion: new Date().toISOString(),
     });
@@ -129,73 +132,80 @@ export async function anadirSeleccionada(idPublicacion) {
  *
  * @param {number|string} idPublicacion
  * @returns {Promise<object>} La publicación que se quitó.
- * @throws {ValidationError} Si el id no es válido.
- * @throws {NotFoundError} Si la publicación no estaba seleccionada
- *                         (o directamente no existe).
+ * @throws {ValidationError}
+ * @throws {NotFoundError}
  */
 export async function quitarSeleccionada(idPublicacion) {
+  const db = getDb();
+  const coleccionSeleccionadas = db.collection('seleccionadas');
+
   const idNum = Number(idPublicacion);
+
   if (!Number.isInteger(idNum) || idNum <= 0) {
     throw new ValidationError('El identificador de la publicación no es válido.');
   }
 
-  const indice = seleccionadas.findIndex((s) => s.publicacionId === idNum);
-  if (indice === -1) {
+  const seleccionada = await coleccionSeleccionadas.findOne({
+    publicacionId: idNum,
+  });
+
+  if (!seleccionada) {
     throw new NotFoundError(`La publicación con id ${idNum} no estaba seleccionada.`);
   }
 
-  seleccionadas.splice(indice, 1);
+  await coleccionSeleccionadas.deleteOne({ publicacionId: idNum });
 
-  // Devolvemos la publicación completa si aún existe, o un "placeholder" mínimo
-  // si la publicación original fue eliminada pero la selección persistía.
   const publicacion = await publicacionModel.buscarPublicacionPorId(idNum);
+
   return publicacion || { id: idNum };
 }
 
 /**
  * Limpia todas las seleccionadas que apuntan a publicaciones inexistentes.
  *
- * Se debe llamar tras eliminar una publicación, para mantener coherencia
- * entre ambas "tablas". Lo hace el resolver de eliminarPublicacion en Fase 4
- * (o un trigger de MongoDB con $lookup en Atlas).
- *
  * @returns {Promise<number>} Cantidad de selecciones huérfanas eliminadas.
  */
 export async function limpiarSeleccionesHuerfanas() {
+  const db = getDb();
+  const coleccionSeleccionadas = db.collection('seleccionadas');
+
   const publicaciones = await publicacionModel.listarPublicaciones();
   const idsExistentes = new Set(publicaciones.map((p) => Number(p.id)));
 
-  const antes = seleccionadas.length;
+  const seleccionadasDb = await coleccionSeleccionadas.find({}).toArray();
 
-  for (let i = seleccionadas.length - 1; i >= 0; i--) {
-    if (!idsExistentes.has(Number(seleccionadas[i].publicacionId))) {
-      seleccionadas.splice(i, 1);
-    }
+  const huerfanas = seleccionadasDb.filter(
+    (s) => !idsExistentes.has(Number(s.publicacionId))
+  );
+
+  if (huerfanas.length > 0) {
+    await coleccionSeleccionadas.deleteMany({
+      publicacionId: {
+        $in: huerfanas.map((s) => Number(s.publicacionId)),
+      },
+    });
   }
 
-  return antes - seleccionadas.length;
+  return huerfanas.length;
 }
 
 /**
- * Devuelve el resumen numérico para el dashboard del Producto 2:
- *   - total de ofertas
- *   - total de demandas
- *   - total de usuarios
- *   - total de publicaciones seleccionadas
- *
- * Este es el payload exacto que el dashboard del frontend renderiza en sus
- * cajitas de resumen en la parte superior de la página.
+ * Devuelve el resumen numérico para el dashboard del Producto 2.
  *
  * @returns {Promise<{totalOfertas: number, totalDemandas: number, totalUsuarios: number, totalSeleccionadas: number}>}
  */
 export async function obtenerResumenDashboard() {
+  const db = getDb();
+  const coleccionSeleccionadas = db.collection('seleccionadas');
+
   const recuento = await publicacionModel.contarPublicaciones();
   const usuarios = await usuarioModel.listarUsuarios();
+  const totalSeleccionadas = await coleccionSeleccionadas.countDocuments({});
 
   return {
     totalOfertas: recuento.ofertas,
     totalDemandas: recuento.demandas,
     totalUsuarios: usuarios.length,
-    totalSeleccionadas: seleccionadas.length,
+    totalSeleccionadas,
   };
 }
