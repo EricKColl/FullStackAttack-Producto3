@@ -22,6 +22,10 @@ import { typeDefs } from './graphql/typeDefs.js';
 import { resolvers } from './graphql/resolvers/index.js';
 import { notFoundHandler, errorHandler } from './middleware/errorHandler.js';
 
+
+import { seedDatabase } from './seed/seed.js';
+
+
 /**
  * Instancia del servidor Express.
  * Se configura dentro de startServer() tras conectar a Mongo y arrancar Apollo.
@@ -52,14 +56,18 @@ async function startServer() {
     //    Si Mongo no está arriba, fallamos rápido y no montamos el servidor web.
     await connectToMongo();
 
-    // 2. Arrancar Apollo Server.
+    // 2. Ejecutar seed inicial e índices tras conectar a MongoDB.
+    //    El seed comprueba si ya hay datos para no duplicarlos.
+    await seedDatabase();
+
+    // 3. Arrancar Apollo Server.
     await apolloServer.start();
 
-    // 3. Middlewares de Express.
+    // 4. Middlewares de Express.
     app.use(cors());
     app.use(express.json());
 
-    // 4. Montar el endpoint de GraphQL.
+    // 5. Montar el endpoint de GraphQL.
     //    El context (por ahora vacío) se enriquecerá en la Fase 5 con el usuario JWT.
     app.use(
       '/graphql',
@@ -68,7 +76,7 @@ async function startServer() {
       })
     );
 
-    // 5. Endpoint raíz: confirma que el servidor está vivo sin tocar GraphQL.
+    // 6. Endpoint raíz: confirma que el servidor está vivo sin tocar GraphQL.
     app.get('/', (req, res) => {
       res.json({
         service: 'JobConnect Backend',
@@ -78,13 +86,13 @@ async function startServer() {
       });
     });
 
-    // 6. Middleware de 404 para rutas no definidas (debe ir DESPUÉS de las rutas válidas).
+    // 7. Middleware de 404 para rutas no definidas (debe ir DESPUÉS de las rutas válidas).
     app.use(notFoundHandler);
 
-    // 7. Middleware centralizado de errores (debe ir el ÚLTIMO).
+    // 8. Middleware centralizado de errores (debe ir el ÚLTIMO).
     app.use(errorHandler);
 
-    // 8. Poner el servidor a escuchar.
+    // 9. Poner el servidor a escuchar.
     app.listen(env.port, () => {
       console.log(`[server] Servidor escuchando en http://localhost:${env.port}`);
       console.log(`[server] GraphQL disponible en http://localhost:${env.port}/graphql`);
