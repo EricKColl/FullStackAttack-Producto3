@@ -22,6 +22,7 @@
  */
 
 import { getDb } from '../config/db.js';
+import bcrypt from 'bcryptjs';
 
 import {
   normalizarTexto,
@@ -35,6 +36,7 @@ import {
   ValidationError,
   NotFoundError,
   ConflictError,
+  UnauthorizedError,
 } from '../utils/errors.js';
 
 /**
@@ -307,4 +309,51 @@ export async function loguearUsuario(email, password) {
 
   // 3. Devolver usuario autenticado sin password.
   return serializarUsuario(encontrado);
+}
+/**
+ * Realiza el login del administrador.
+ *
+ * A diferencia de loguearUsuario(), esta función está pensada para la Fase 5:
+ * - busca el usuario por email,
+ * - comprueba que tenga rol "admin",
+ * - compara la contraseña escrita con el hash guardado en MongoDB usando bcrypt,
+ * - devuelve el usuario si todo es correcto.
+ *
+ * @param {string} email - Email introducido por el administrador.
+ * @param {string} password - Contraseña introducida por el administrador.
+ * @returns {Promise<object>} Usuario administrador autenticado.
+ * @throws {UnauthorizedError} Si las credenciales son incorrectas o no es admin.
+ */
+export async function loginAdmin(email, password) {
+  const db = getDb();
+  const coleccionUsuarios = db.collection('usuarios');
+
+  const emailNorm = normalizarEmail(email);
+  const passwordNorm = normalizarTexto(password);
+
+  validarCamposObligatorios(
+    { email: emailNorm, password: passwordNorm },
+    ['email', 'password']
+  );
+  validarEmail(emailNorm);
+
+  const usuario = await coleccionUsuarios.findOne({
+    email: emailNorm,
+  });
+
+  if (!usuario) {
+    throw new UnauthorizedError('Credenciales de administrador incorrectas.');
+  }
+
+  if (usuario.rol !== 'admin') {
+    throw new UnauthorizedError('El usuario no tiene permisos de administrador.');
+  }
+
+  const passwordCorrecta = await bcrypt.compare(passwordNorm, usuario.password);
+
+  if (!passwordCorrecta) {
+    throw new UnauthorizedError('Credenciales de administrador incorrectas.');
+  }
+
+  return serializarUsuario(usuario);
 }
