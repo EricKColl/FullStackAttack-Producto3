@@ -11,14 +11,20 @@
  *
  * Siguiendo el patrón "thin resolver / fat model", aquí solo adaptamos
  * argumentos y delegamos en seleccionadaModel.
+ *
+ * En la Fase 5 protegemos las mutations sensibles con JWT:
+ * - anadirSeleccionada requiere administrador autenticado.
+ * - quitarSeleccionada requiere administrador autenticado.
  */
 
+import { requireAdmin } from '../../middleware/auth.js';
 import * as seleccionadaModel from '../../models/seleccionadaModel.js';
 
 export const seleccionadaResolver = {
   Query: {
     /**
      * Devuelve solo los ids de las publicaciones seleccionadas.
+     * Esta query se mantiene pública porque solo lee datos.
      */
     idsSeleccionados: () => {
       return seleccionadaModel.listarIdsSeleccionados();
@@ -26,6 +32,7 @@ export const seleccionadaResolver = {
 
     /**
      * Devuelve las publicaciones seleccionadas como objetos completos.
+     * Esta query se mantiene pública porque solo lee datos.
      */
     listarPublicacionesSeleccionadas: () => {
       return seleccionadaModel.listarPublicacionesSeleccionadas();
@@ -33,6 +40,7 @@ export const seleccionadaResolver = {
 
     /**
      * Devuelve las publicaciones que aún no están seleccionadas.
+     * Esta query se mantiene pública porque solo lee datos.
      */
     listarPublicacionesDisponibles: () => {
       return seleccionadaModel.listarPublicacionesDisponibles();
@@ -40,6 +48,7 @@ export const seleccionadaResolver = {
 
     /**
      * Devuelve el resumen numérico del dashboard (4 totales).
+     * Esta query se mantiene pública porque solo lee datos.
      */
     resumenDashboard: () => {
       return seleccionadaModel.obtenerResumenDashboard();
@@ -50,20 +59,34 @@ export const seleccionadaResolver = {
     /**
      * Añade una publicación al panel de seleccionadas.
      *
+     * Fase 5:
+     * Esta mutation queda protegida. Solo un administrador autenticado
+     * mediante JWT puede modificar las publicaciones seleccionadas.
+     *
      * @param {unknown} _parent
      * @param {{idPublicacion: string}} args
+     * @param {{usuario: object|null}} context
      */
-    anadirSeleccionada: (_parent, args) => {
+    anadirSeleccionada: (_parent, args, context) => {
+      requireAdmin(context);
+
       return seleccionadaModel.anadirSeleccionada(args.idPublicacion);
     },
 
     /**
      * Quita una publicación del panel de seleccionadas.
      *
+     * Fase 5:
+     * Esta mutation queda protegida. Solo un administrador autenticado
+     * mediante JWT puede modificar las publicaciones seleccionadas.
+     *
      * @param {unknown} _parent
      * @param {{idPublicacion: string}} args
+     * @param {{usuario: object|null}} context
      */
-    quitarSeleccionada: (_parent, args) => {
+    quitarSeleccionada: (_parent, args, context) => {
+      requireAdmin(context);
+
       return seleccionadaModel.quitarSeleccionada(args.idPublicacion);
     },
   },

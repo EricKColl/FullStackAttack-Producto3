@@ -11,6 +11,7 @@
  * - loginAdmin valida credenciales mediante el model.
  * - Si el usuario es admin, se genera un token JWT.
  * - El cliente podrá usar ese token en el header Authorization.
+ * - Las mutations sensibles quedan protegidas con requireAdmin(context).
  *
  * Si un model lanza un AppError (ValidationError, NotFoundError, etc.),
  * Apollo Server lo atrapa y lo transforma automáticamente en una respuesta
@@ -20,6 +21,7 @@
 import jwt from 'jsonwebtoken';
 
 import { env } from '../../config/env.js';
+import { requireAdmin } from '../../middleware/auth.js';
 import * as usuarioModel from '../../models/usuarioModel.js';
 
 /**
@@ -55,6 +57,9 @@ export const usuarioResolver = {
     /**
      * Lista todos los usuarios ordenados alfabéticamente.
      * No requiere argumentos.
+     *
+     * Esta query se mantiene pública porque solo devuelve datos básicos
+     * y nunca expone contraseñas.
      */
     listarUsuarios: () => {
       return usuarioModel.listarUsuarios();
@@ -64,6 +69,8 @@ export const usuarioResolver = {
      * Busca un usuario por email. Devuelve null si no existe
      * (GraphQL permite null porque el campo `usuarioPorEmail: Usuario`
      *  no lleva el signo de exclamación).
+     *
+     * Esta query se mantiene pública por compatibilidad con el proyecto actual.
      *
      * @param {unknown} _parent
      * @param {{email: string}} args
@@ -76,23 +83,35 @@ export const usuarioResolver = {
   Mutation: {
     /**
      * Crea un usuario nuevo.
-     * El model lanza ValidationError o ConflictError si algo falla.
+     *
+     * Fase 5:
+     * Esta mutation queda protegida. Solo un administrador autenticado
+     * mediante JWT puede crear usuarios.
      *
      * @param {unknown} _parent
      * @param {{datos: object}} args
+     * @param {{usuario: object|null}} context
      */
-    crearUsuario: (_parent, args) => {
+    crearUsuario: (_parent, args, context) => {
+      requireAdmin(context);
+
       return usuarioModel.crearUsuario(args.datos);
     },
 
     /**
      * Elimina un usuario por email. Devuelve el usuario eliminado.
-     * El model lanza NotFoundError si no existe.
+     *
+     * Fase 5:
+     * Esta mutation queda protegida. Solo un administrador autenticado
+     * mediante JWT puede eliminar usuarios.
      *
      * @param {unknown} _parent
      * @param {{email: string}} args
+     * @param {{usuario: object|null}} context
      */
-    eliminarUsuario: (_parent, args) => {
+    eliminarUsuario: (_parent, args, context) => {
+      requireAdmin(context);
+
       return usuarioModel.eliminarUsuarioPorEmail(args.email);
     },
 
@@ -117,6 +136,9 @@ export const usuarioResolver = {
      * 1. El model comprueba email, password y rol admin.
      * 2. Si todo es correcto, el resolver genera un token JWT.
      * 3. Devuelve el token y los datos públicos del usuario.
+     *
+     * Esta mutation NO se protege con requireAdmin porque precisamente
+     * sirve para conseguir el token inicial.
      *
      * @param {unknown} _parent
      * @param {{email: string, password: string}} args
