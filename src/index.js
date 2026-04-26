@@ -22,6 +22,7 @@ import { connectToMongo, closeMongo } from './config/db.js';
 import { typeDefs } from './graphql/typeDefs.js';
 import { resolvers } from './graphql/resolvers/index.js';
 import { notFoundHandler, errorHandler } from './middleware/errorHandler.js';
+import { obtenerUsuarioDesdeRequest } from './middleware/auth.js';
 import { seedDatabase } from './seed/seed.js';
 
 /**
@@ -70,7 +71,9 @@ async function startServer() {
     app.use(
       '/graphql',
       expressMiddleware(apolloServer, {
-        context: async () => ({}),
+        context: async ({ req }) => ({
+          usuario: obtenerUsuarioDesdeRequest(req),
+        }),
       })
     );
 
