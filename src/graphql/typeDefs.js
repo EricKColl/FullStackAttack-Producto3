@@ -47,6 +47,18 @@ export const typeDefs = `#graphql
   }
 
   """
+  Respuesta de autenticación para el login del administrador.
+  Incluye el token JWT y los datos públicos del usuario autenticado.
+  """
+  type AuthPayload {
+    "Token JWT que debe enviarse en el header Authorization como Bearer token."
+    token: String!
+
+    "Usuario administrador autenticado, sin exponer la contraseña."
+    usuario: Usuario!
+  }
+
+  """
   Representa una publicación en JobConnect: puede ser una oferta de empleo
   publicada por una empresa, o una demanda publicada por un candidato.
   """
@@ -241,7 +253,7 @@ export const typeDefs = `#graphql
   # MUTATIONS
   # =============================================================
 
-  type Mutation {
+    type Mutation {
     # --- Usuario ---
 
     """
@@ -264,14 +276,25 @@ export const typeDefs = `#graphql
     Autentica a un usuario con email y password.
     Devuelve el usuario sin password si las credenciales son válidas.
 
-    Nota: en la Fase 5 esta mutation se transformará en loginAdmin
-    y devolverá un token JWT. De momento solo valida credenciales.
-
+    Esta mutation se mantiene por compatibilidad con el trabajo previo.
+    Para la autenticación segura de administrador se usa loginAdmin.
+    
     Errores posibles:
     - VALIDATION_ERROR: faltan credenciales.
     - NOT_FOUND: email o password incorrectos.
     """
     loguearUsuario(email: String!, password: String!): Usuario!
+
+    """
+    Autentica al administrador de la aplicación.
+    Si las credenciales son correctas y el usuario tiene rol admin,
+    devuelve un token JWT y los datos públicos del usuario autenticado.
+
+    Errores posibles:
+    - VALIDATION_ERROR: faltan credenciales o el email no es válido.
+    - UNAUTHORIZED: credenciales incorrectas o usuario sin permisos de administrador.
+    """
+    loginAdmin(email: String!, password: String!): AuthPayload!
 
     # --- Publicacion ---
 

@@ -7,12 +7,48 @@
  * delegan toda la lógica de normalización, validación y persistencia
  * al model (src/models/usuarioModel.js).
  *
+ * En la Fase 5 añadimos la autenticación de administrador con JWT:
+ * - loginAdmin valida credenciales mediante el model.
+ * - Si el usuario es admin, se genera un token JWT.
+ * - El cliente podrá usar ese token en el header Authorization.
+ *
  * Si un model lanza un AppError (ValidationError, NotFoundError, etc.),
  * Apollo Server lo atrapa y lo transforma automáticamente en una respuesta
  * GraphQL con el campo `errors` poblado, incluyendo code y message.
  */
 
+import jwt from 'jsonwebtoken';
+
+import { env } from '../../config/env.js';
 import * as usuarioModel from '../../models/usuarioModel.js';
+
+/**
+ * Genera un token JWT para el usuario administrador autenticado.
+ *
+ * El token incluye información mínima:
+ * - sub: id del usuario, definido en la opción subject.
+ * - email: correo del usuario.
+ * - rol: rol del usuario.
+ *
+ * Importante:
+ * El token no guarda la contraseña ni información sensible.
+ *
+ * @param {object} usuario - Usuario administrador autenticado.
+ * @returns {string} Token JWT firmado.
+ */
+function generarTokenAdmin(usuario) {
+  return jwt.sign(
+    {
+      email: usuario.email,
+      rol: usuario.rol,
+    },
+    env.jwtSecret,
+    {
+      subject: String(usuario.id),
+      expiresIn: env.jwtExpiresIn,
+    }
+  );
+}
 
 export const usuarioResolver = {
   Query: {
@@ -63,13 +99,37 @@ export const usuarioResolver = {
     /**
      * Autentica a un usuario por email + password.
      * Devuelve el usuario sin password si las credenciales coinciden.
-     * En la Fase 5 esta mutation se evolucionará a loginAdmin con JWT.
+     *
+     * Se mantiene por compatibilidad con el trabajo previo.
+     * Para la autenticación segura de administrador se usa loginAdmin.
      *
      * @param {unknown} _parent
      * @param {{email: string, password: string}} args
      */
     loguearUsuario: (_parent, args) => {
       return usuarioModel.loguearUsuario(args.email, args.password);
+    },
+
+    /**
+     * Autentica al administrador y devuelve un token JWT.
+     *
+     * Flujo:
+     * 1. El model comprueba email, password y rol admin.
+     * 2. Si todo es correcto, el resolver genera un token JWT.
+     * 3. Devuelve el token y los datos públicos del usuario.
+     *
+     * @param {unknown} _parent
+     * @param {{email: string, password: string}} args
+     * @returns {Promise<{token: string, usuario: object}>}
+     */
+    loginAdmin: async (_parent, args) => {
+      const usuario = await usuarioModel.loginAdmin(args.email, args.password);
+      const token = generarTokenAdmin(usuario);
+
+      return {
+        token,
+        usuario,
+      };
     },
   },
 };
