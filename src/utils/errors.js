@@ -1,103 +1,107 @@
 /**
  * @file src/utils/errors.js
- * @description Clases de error personalizadas para el backend.
+ * @description Clases de error personalizadas con semántica HTTP y GraphQL.
  *
- * Cada error tiene:
- *   - statusCode: HTTP status que devolverá el errorHandler.
- *   - code:       string identificador para el cliente (p. ej. "VALIDATION_ERROR").
+ * Todas las clases extienden de GraphQLError (no de Error plano) para que
+ * Apollo Server respete el código del error en lugar de enmascararlo
+ * automáticamente como INTERNAL_SERVER_ERROR.
  *
- * Uso típico en models/resolvers:
- *   throw new ValidationError('El email no es válido.');
- *   throw new NotFoundError('Usuario no encontrado.');
- *   throw new ConflictError('Ya existe un usuario con ese email.');
+ * Beneficios de extender de GraphQLError:
+ *   1. Apollo lee el `code` del campo `extensions` y lo expone al cliente
+ *      tal cual, sin enmascararlo.
+ *   2. Apollo deja de filtrar el `stacktrace` en la respuesta porque
+ *      reconoce el error como esperado (no como crash imprevisto).
+ *   3. El cliente recibe un código semántico (UNAUTHORIZED, VALIDATION_ERROR,
+ *      NOT_FOUND, etc.) que puede usar para decidir cómo reaccionar.
  *
- * El middleware src/middleware/errorHandler.js lee estas propiedades
- * y construye automáticamente la respuesta HTTP correspondiente.
+ * Cada subclase mantiene además su `statusCode` HTTP por compatibilidad
+ * con el middleware errorHandler de Express, que sigue funcionando igual
+ * para cualquier ruta REST que se añada en el futuro.
+ *
+ * @example
+ * import { ValidationError } from '../utils/errors.js';
+ * throw new ValidationError('El email no tiene un formato válido.');
+ * // → cliente recibe: { errors: [{ message: '...', extensions: { code: 'VALIDATION_ERROR' } }] }
  */
 
+import { GraphQLError } from 'graphql';
+
 /**
- * Error base del que heredan todos los errores personalizados del dominio.
- * Nunca se lanza directamente: se usan sus subclases.
+ * Clase base de todos los errores del dominio.
+ *
+ * Todas las subclases pasan por aquí, garantizando que cada error tenga:
+ *   - un mensaje legible
+ *   - un statusCode HTTP semántico (para Express)
+ *   - un code textual (para GraphQL extensions)
+ *
+ * @abstract
  */
-export class AppError extends Error {
+export class AppError extends GraphQLError {
   /**
-   * @param {string} mensaje - Mensaje descriptivo para el cliente.
-   * @param {number} statusCode - HTTP status code (400, 404, 409, etc.).
-   * @param {string} code - Código simbólico del error (UPPER_SNAKE_CASE).
+   * @param {string} message  - Mensaje legible para el cliente.
+   * @param {number} statusCode - Código HTTP equivalente (400, 401, 403, 404, 409, 500).
+   * @param {string} code     - Código textual (VALIDATION_ERROR, UNAUTHORIZED, etc.).
    */
-  constructor(mensaje, statusCode, code) {
-    super(mensaje);
+  constructor(message, statusCode, code) {
+    super(message, {
+      extensions: { code },
+    });
+
+    // Apollo usa `extensions.code`, pero mantenemos también las propiedades
+    // sueltas `statusCode` y `code` por compatibilidad con el errorHandler
+    // de Express (middleware/errorHandler.js).
     this.name = this.constructor.name;
     this.statusCode = statusCode;
     this.code = code;
-
-    // Captura el stack trace sin incluir esta función constructor.
-    if (Error.captureStackTrace) {
-      Error.captureStackTrace(this, this.constructor);
-    }
   }
 }
 
 /**
- * Error 400 — Datos de entrada inválidos.
- *
- * Se lanza cuando el cliente envía datos que no cumplen las reglas de validación:
- * email con formato incorrecto, fecha mal formada, campos obligatorios vacíos, etc.
+ * Error 400 — datos de entrada inválidos.
+ * Se lanza cuando una validación falla (formato de email, longitud, fecha imposible, etc.).
  */
 export class ValidationError extends AppError {
-  /** @param {string} mensaje */
-  constructor(mensaje) {
-    super(mensaje, 400, 'VALIDATION_ERROR');
+  constructor(message = 'Los datos enviados no son válidos.') {
+    super(message, 400, 'VALIDATION_ERROR');
   }
 }
 
 /**
- * Error 404 — Recurso no encontrado.
- *
- * Se lanza cuando se busca una entidad por id/email y no existe en la BBDD.
- */
-export class NotFoundError extends AppError {
-  /** @param {string} mensaje */
-  constructor(mensaje) {
-    super(mensaje, 404, 'NOT_FOUND');
-  }
-}
-
-/**
- * Error 409 — Conflicto con el estado actual del recurso.
- *
- * Se lanza típicamente al intentar crear una entidad duplicada:
- * un usuario con un email ya registrado, por ejemplo.
- */
-export class ConflictError extends AppError {
-  /** @param {string} mensaje */
-  constructor(mensaje) {
-    super(mensaje, 409, 'CONFLICT');
-  }
-}
-
-/**
- * Error 401 — No autenticado.
- *
- * Se lanza cuando se intenta acceder a una operación protegida sin
- * enviar un token JWT válido. Se usará en la Fase 5.
+ * Error 401 — el cliente no está autenticado.
+ * Se lanza cuando falta el token JWT, está caducado o es inválido.
  */
 export class UnauthorizedError extends AppError {
-  /** @param {string} mensaje */
-  constructor(mensaje) {
-    super(mensaje, 401, 'UNAUTHORIZED');
+  constructor(message = 'Necesitas autenticarte para realizar esta operación.') {
+    super(message, 401, 'UNAUTHORIZED');
   }
 }
 
 /**
- * Error 403 — Autenticado pero sin permisos.
- *
- * Se lanza cuando el usuario está autenticado pero no tiene el rol
- * necesario para ejecutar la operación. Se usará en la Fase 5.
+ * Error 403 — el cliente está autenticado pero no tiene permisos.
+ * Se lanza cuando un usuario sin rol admin intenta acceder a una operación restringida.
  */
 export class ForbiddenError extends AppError {
-  /** @param {string} mensaje */
-  constructor(mensaje) {
-    super(mensaje, 403, 'FORBIDDEN');
+  constructor(message = 'No tienes permisos suficientes para esta operación.') {
+    super(message, 403, 'FORBIDDEN');
+  }
+}
+
+/**
+ * Error 404 — el recurso solicitado no existe.
+ * Se lanza al buscar por id o email un usuario o publicación inexistente.
+ */
+export class NotFoundError extends AppError {
+  constructor(message = 'El recurso solicitado no existe.') {
+    super(message, 404, 'NOT_FOUND');
+  }
+}
+
+/**
+ * Error 409 — conflicto con el estado actual del recurso.
+ * Se lanza típicamente al intentar registrar un email duplicado.
+ */
+export class ConflictError extends AppError {
+  constructor(message = 'El recurso entra en conflicto con el estado actual.') {
+    super(message, 409, 'CONFLICT');
   }
 }
