@@ -146,6 +146,107 @@ El environment `JobConnect — Local` contiene las variables necesarias para eje
 | `adminPassword` | Contraseña del administrador definida en el fichero `.env`. Por defecto: `admin1234`. |
 | `token` | Token JWT del administrador. Se rellena automáticamente después de ejecutar correctamente la request `Login Admin`. |
 
+## Environments alternativos
+
+Esta carpeta incluye un environment listo para desarrollo local
+(`JobConnect-Local.postman_environment.json`). Para Fase 6 trabajamos contra
+**MongoDB Atlas** y, durante la grabación del vídeo y la entrega, contra
+**CodeSandbox**.
+
+### Local + Atlas (mismo environment)
+
+Mientras el backend se ejecuta en tu PC con `npm run dev`, da igual si la
+base de datos es Docker local o Atlas: el endpoint GraphQL sigue siendo
+`http://localhost:4000/graphql`. Por tanto, el environment
+`JobConnect-Local` sirve igual en ambos casos.
+
+Lo único que cambia entre los dos modos es la variable `MONGO_URI` del
+fichero `.env` del backend. La colección Postman no necesita modificación.
+
+### CodeSandbox (environment paralelo)
+
+Cuando despleguemos el backend en CodeSandbox, la URL del endpoint cambia
+a algo como `https://<id-sandbox>.csb.app/graphql`. Para no tener que
+editar la variable `baseUrl` cada vez, recomendamos crear un segundo
+environment en Postman:
+
+1. Duplicar el environment `JobConnect — Local` (clic derecho → Duplicate).
+2. Renombrar el duplicado a `JobConnect — Atlas` o `JobConnect — Sandbox`.
+3. Editar la variable `baseUrl` para apuntar a la URL pública de CodeSandbox.
+4. Mantener `adminEmail`, `adminPassword` y `token` con los mismos valores.
+
+A partir de ese momento, alternar entre los entornos requiere solo cambiar
+el selector de la esquina superior derecha de Postman.
+
+## Configurar la conexión a Atlas en el backend
+
+Para que el backend se conecte a MongoDB Atlas en lugar de a Docker local:
+
+1. En el panel de Atlas, ir a `Database → Clusters → Connect → Drivers` y
+   copiar la URI con formato `mongodb+srv://...`.
+2. Sustituir `<db_password>` por la contraseña real del Database User.
+3. **Importante**: si la contraseña contiene caracteres especiales como `!`,
+   `@`, `:`, `/`, `?` o `#`, hay que URL-encodearlos antes de pegarlos en
+   la URI. Por ejemplo: `!` → `%21`, `@` → `%40`.
+4. Pegar la URI resultante en `.env` como `MONGO_URI=...` (todo en una sola
+   línea, sin comillas).
+5. Reiniciar el servidor con `npm run dev`. La primera vez, el seed
+   poblará la base de datos cloud con los 3 usuarios y 4 publicaciones
+   iniciales más el administrador con contraseña hasheada.
+
+La URI completa **no se commitea al repositorio** porque incluye la
+contraseña del Database User. Está en el `.env` local de cada miembro del
+equipo y, en el futuro, en las variables de entorno secretas de CodeSandbox.
+
+## Despliegue público en CodeSandbox
+
+El backend del Producto 3 está desplegado en CodeSandbox como entrega final
+de la Fase 6. CodeSandbox provee una URL pública persistente que cualquier
+revisor puede usar sin necesidad de clonar el repositorio ni instalar nada
+en local.
+
+**URL pública del backend:**
+https://2cw562-4000.csb.app
+
+**Endpoint GraphQL:**
+https://2cw562-4000.csb.app/graphql
+
+Abrir esa URL en un navegador carga **Apollo Sandbox** (la UI gráfica oficial
+de Apollo Server) con el schema introspectado en vivo. Cualquiera puede
+ejecutar queries y mutations contra el backend desplegado, incluido el flujo
+completo de autenticación de administrador con JWT.
+
+### Conexión Postman → CodeSandbox
+
+Para apuntar Postman al backend desplegado en lugar del backend local:
+
+1. Duplicar el environment `JobConnect — Local` (clic derecho → Duplicate).
+2. Renombrar el duplicado a `JobConnect — CodeSandbox`.
+3. Editar la variable `baseUrl` y cambiar su valor a:
+   `https://2cw562-4000.csb.app/graphql`
+4. Mantener `adminEmail`, `adminPassword` y `token` con los mismos valores.
+5. Activar el environment `JobConnect — CodeSandbox` desde la esquina
+   superior derecha de Postman.
+
+Tras este cambio, las 22 requests de la colección funcionan idénticas pero
+contra el backend en cloud. La latencia es algo mayor (1-3 segundos por
+request en lugar de los 30-50 ms del backend local), pero todos los tests
+del Collection Runner siguen pasando.
+
+### Configuración interna de CodeSandbox
+
+Las variables de entorno necesarias para que el backend arranque
+(`MONGO_URI`, `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, etc.) están
+configuradas como **secretos cifrados** en el panel del repositorio de
+CodeSandbox (`Editor → Repository → Env Variables`). No se commitean al
+repositorio público y solo el dueño del workspace tiene acceso a sus
+valores reales.
+
+La base de datos a la que apunta el backend desplegado es **el mismo
+cluster de MongoDB Atlas** descrito en la sección anterior. Esto garantiza
+que los datos sean consistentes entre el backend local (cuando un miembro
+del equipo lo arranca con `npm run dev`) y el backend desplegado.
+
 ---
 
 ## 8. Tests automáticos incluidos

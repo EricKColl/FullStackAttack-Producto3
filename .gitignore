@@ -8,11 +8,13 @@
 node_modules/
 
 # --- Variables de entorno ---
-# Contiene secretos (JWT, URI Mongo Atlas, contraseñas).
-# Solo se sube la plantilla .env.example.
-.env
-.env.local
-.env.*.local
+# Contienen secretos (JWT secret, URI Atlas con password, credenciales del admin).
+# Solo se sube la plantilla .env.example, nunca un .env real.
+# El patrón .env* captura cualquier variante: .env, .env.local, .env.atlas,
+# .env.production, .env.local-backup, .env.bak, etc.
+# Excepción explícita para .env.example (la plantilla pública).
+.env*
+!.env.examples
 
 # --- Logs ---
 logs/
